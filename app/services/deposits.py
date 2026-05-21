@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.bank import Bank
+from app.models.customer_segment import CustomerSegment
 from app.models.deposit_base_rate import DepositBaseRate
 from app.models.deposit_bonus_rate import DepositRateBonus
 from app.models.deposit_interest_scheme import DepositInterestScheme
@@ -43,12 +44,14 @@ def _base_variant_stmt() -> Select:
             Bank.is_active.is_(True),
         )
         .options(
-            selectinload(DepositVariant.product).selectinload(DepositProduct.bank),
+            selectinload(DepositVariant.product)
+            .selectinload(DepositProduct.bank)
+            .selectinload(Bank.customer_segments),
             selectinload(DepositVariant.open_methods).selectinload(
                 DepositVariantOpenMethod.open_method
             ),
             selectinload(DepositVariant.interest_schemes),
-            selectinload(DepositVariant.base_rates),
+            selectinload(DepositVariant.base_rates).selectinload(DepositBaseRate.customer_segment),
             selectinload(DepositVariant.bonuses).selectinload(
                 DepositRateBonus.conditions
             ),
@@ -217,6 +220,8 @@ def _build_calc_ctx(
         as_of=params.as_of,
         open_method_code=open_method_code,
         interest_scheme_code=params.interest_scheme_code,
+        customer_segment_code=params.customer_segment_code,
+        conditions=params.conditions,
         has_subscription=params.has_subscription,
         is_salary_client=params.is_salary_client,
         is_pension_client=params.is_pension_client,

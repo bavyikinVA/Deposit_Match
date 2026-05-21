@@ -6,14 +6,19 @@ from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_session
-from app.models import DepositVariant, DepositProduct, DepositInterestScheme
+from app.models import DepositVariant, DepositProduct, DepositInterestScheme, CustomerSegment, Bank
 from app.schemas.deposit import (
     DepositSearchParams,
     DepositsPage,
     DepositCalculationRequest,
     DepositCalculationResult,
     DepositsStatsOut,
+    CalculatorOptionsOut,
+    CalculatorOptionOut,
+    CalculatorTermOptionOut,
+    CalculatorConditionOut, BankOut,
 )
+
 from app.services.deposit_calculator import (
     CalculationContext,
     DepositCalculationError,
@@ -83,6 +88,8 @@ async def calculate_deposit(
             as_of=payload.as_of,
             open_method_code=payload.open_method_code,
             interest_scheme_code=payload.interest_scheme_code,
+            customer_segment_code=payload.customer_segment_code,
+            conditions=payload.conditions,
             has_subscription=payload.has_subscription,
             is_salary_client=payload.is_salary_client,
             is_pension_client=payload.is_pension_client,
@@ -150,6 +157,136 @@ async def deposits_stats(
 ):
     return await get_deposits_stats(session)
 
+def _format_days_label(days: int) -> str:
+    known = {
+        30: "1 месяц",
+        31: "1 месяц",
+        60: "2 месяца",
+        61: "2 месяца",
+        62: "2 месяца",
+        90: "3 месяца",
+        91: "3 месяца",
+        92: "93 месяца",
+        120: "4 месяца",
+        123: "4 месяца",
+        180: "6 месяцев",
+        181: "6 месяцев",
+        184: "6 месяцев",
+        276: "9 месяцев",
+        365: "1 год",
+        367: "1 год",
+        548: "1,5 года",
+        730: "2 года",
+        731: "2 года",
+        1095: "3 года",
+    }
+    return known.get(days, f"{days} дн.")
+
+
+def _condition_name(field_name: str) -> str:
+    mapping = {
+        "is_new_money": "Новые деньги",
+        "has_subscription": "Есть подписка",
+        "is_salary_client": "Зарплатный клиент",
+        "is_pension_client": "Пенсионный клиент",
+        "has_premium_package": "Премиум-пакет",
+        "has_t_pro": "T-Pro",
+        "monthly_spend": "Оборот по карте",
+        "savings_balance": "Остаток на счёте",
+        "promo_code": "Промокод",
+    }
+    return mapping.get(field_name, field_name)
+
+
+@router.get("/{variant_id}/calculator-options", response_model=CalculatorOptionsOut)
+async def get_calculator_options(
+    variant_id: int,
+    session: AsyncSession = Depends(get_session),
+):
+    variant = await get_variant_or_404(session, variant_id)
+
+    terms_seen: set[tuple[int, int]] = set()
+    terms: list[CalculatorTermOptionOut] = []
+    for rate in sorted(variant.base_rates, key=lambda r: (r.term_from_days, r.term_to_days)):
+        key = (rate.term_from_days, rate.term_to_days)
+        if key in terms_seen:
+            continue
+        terms_seen.add(key)
+        label = (
+            f"{_format_days_label(rate.term_from_days)} ({rate.term_from_days} дн.)"
+            if rate.term_from_days == rate.term_to_days
+            else f"{_format_days_label(rate.term_from_days)} — {_format_days_label(rate.term_to_days)} "
+                 f"({rate.term_from_days}–{rate.term_to_days} дн.)"
+        )
+        terms.append(CalculatorTermOptionOut(days=rate.term_from_days, label=label))
+
+    open_methods = [
+        CalculatorOptionOut(code=item.open_method.code, name=item.open_method.name)
+        for item in variant.open_methods
+        if getattr(item, "open_method", None) and item.open_method.is_active
+    ]
+
+    interest_schemes = [
+        CalculatorOptionOut(code=scheme.code, name=scheme.name)
+        for scheme in variant.interest_schemes
+        if scheme.is_active
+    ]
+
+    bank_segments = getattr(variant.product.bank, "customer_segments", [])
+    segment_codes_in_rates = {
+        rate.customer_segment.code
+        for rate in variant.base_rates
+        if getattr(rate, "customer_segment", None) is not None
+    }
+    customer_segments = [
+        CalculatorOptionOut(code="", name="Обычный клиент")
+    ]
+    customer_segments.extend(
+        CalculatorOptionOut(code=segment.code, name=segment.name)
+        for segment in sorted(bank_segments, key=lambda s: (s.priority, s.name))
+        if segment.is_active and segment.code in segment_codes_in_rates and segment.code != "common"
+    )
+
+    condition_fields = {
+        condition.field_name
+        for bonus in variant.bonuses
+        for condition in bonus.conditions
+    }
+    conditions = [
+        CalculatorConditionOut(code=field_name, name=_condition_name(field_name))
+        for field_name in sorted(condition_fields)
+        if field_name not in {"amount", "term_days", "open_method_code", "interest_scheme_code", "customer_segment_code"}
+    ]
+
+    return CalculatorOptionsOut(
+        terms=terms,
+        open_methods=open_methods,
+        interest_schemes=interest_schemes,
+        customer_segments=customer_segments,
+        conditions=conditions,
+    )
+
+@router.get("/banks")
+async def deposits_banks(
+    session: AsyncSession = Depends(get_session),
+):
+    stmt = (
+        select(Bank)
+        .where(Bank.is_active.is_(True))
+        .order_by(Bank.name)
+    )
+
+    result = await session.scalars(stmt)
+    banks = result.all()
+
+    return [
+        {
+            "id": bank.id,
+            "name": bank.name,
+            "slug": bank.slug,
+        }
+        for bank in banks
+    ]
 
 @router.get("/{variant_id}")
 async def get_deposit_variant(
@@ -218,6 +355,12 @@ async def get_deposit_variant(
                 "variant_id": rate.variant_id,
                 "interest_scheme_id": rate.interest_scheme_id,
                 "open_method_id": rate.open_method_id,
+                "customer_segment_id": rate.customer_segment_id,
+                "customer_segment": {
+                    "id": rate.customer_segment.id,
+                    "code": rate.customer_segment.code,
+                    "name": rate.customer_segment.name,
+                } if getattr(rate, "customer_segment", None) else None,
                 "amount_from": float(rate.amount_from) if rate.amount_from is not None else None,
                 "amount_to": float(rate.amount_to) if rate.amount_to is not None else None,
                 "term_from_days": rate.term_from_days,

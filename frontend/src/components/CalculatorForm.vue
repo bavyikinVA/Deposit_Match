@@ -49,6 +49,12 @@
         label="Начисление процентов"
         :options="interestSchemeOptions"
       />
+
+      <UiSelect
+        v-model="form.customer_segment_code"
+        label="Сегмент клиента"
+        :options="customerSegmentOptions"
+      />
     </div>
 
     <div class="calculator__checks">
@@ -92,6 +98,7 @@ const form = reactive({
   term_days: '',
   open_method_code: '',
   interest_scheme_code: '',
+  customer_segment_code: '',
   has_subscription: false,
   is_salary_client: false,
   is_pension_client: false,
@@ -246,6 +253,19 @@ function rateMatchesSelectedScheme(rate) {
   return rate.interest_scheme?.code === form.interest_scheme_code
 }
 
+function rateMatchesSelectedSegment(rate) {
+  const selected = form.customer_segment_code || ''
+  const rateSegment = rate.customer_segment?.code || ''
+
+  // Для обычного клиента показываем только универсальные ставки.
+  if (!selected) {
+    return !rateSegment || rateSegment === 'common'
+  }
+
+  // Для выбранного сегмента показываем ставки сегмента и универсальные ставки.
+  return !rateSegment || rateSegment === 'common' || rateSegment === selected
+}
+
 function getRateFromDays(rate) {
   return Number(rate.term_from_days || 0)
 }
@@ -344,7 +364,8 @@ const filteredRatesByMethodAndScheme = computed(() => {
     return (
       rateMatchesAmount(rate) &&
       rateMatchesSelectedMethod(rate) &&
-      rateMatchesSelectedScheme(rate)
+      rateMatchesSelectedScheme(rate) &&
+      rateMatchesSelectedSegment(rate)
     )
   })
 })
@@ -391,6 +412,22 @@ const interestSchemeOptions = computed(() => {
   return options.length ? options : [{ value: '', label: 'Не указано' }]
 })
 
+const customerSegmentOptions = computed(() => {
+  const segments = (props.variant?.base_rates || [])
+    .map((rate) => rate.customer_segment)
+    .filter(Boolean)
+    .map((segment) => ({
+      value: segment.code,
+      label: segment.name
+    }))
+    .filter((segment) => segment.value !== 'common')
+
+  return [
+    { value: '', label: 'Обычный клиент' },
+    ...dedupeByValue(segments)
+  ]
+})
+
 const termOptions = computed(() => {
   return buildTermOptions(filteredRatesByMethodAndScheme.value, props.variant)
 })
@@ -422,13 +459,14 @@ watch(
     form.amount = Number(variant.min_amount || 0)
     form.open_method_code = openMethodOptions.value[0]?.value || ''
     form.interest_scheme_code = chooseDefaultScheme(variant)
+    form.customer_segment_code = customerSegmentOptions.value[0]?.value || ''
     setFirstAvailableTerm()
   },
   { immediate: true }
 )
 
 watch(
-  () => [form.open_method_code, form.interest_scheme_code, form.amount],
+  () => [form.open_method_code, form.interest_scheme_code, form.customer_segment_code, form.amount],
   () => {
     const availableTerms = termOptions.value
     if (!availableTerms.length) return
@@ -459,6 +497,13 @@ function submit() {
     term_days: Number(form.term_days),
     open_method_code: form.open_method_code || null,
     interest_scheme_code: form.interest_scheme_code || null,
+    customer_segment_code: form.customer_segment_code || null,
+    conditions: {
+      has_subscription: form.has_subscription,
+      is_salary_client: form.is_salary_client,
+      is_pension_client: form.is_pension_client,
+      has_premium_package: form.has_premium_package
+    },
     has_subscription: form.has_subscription,
     is_salary_client: form.is_salary_client,
     is_pension_client: form.is_pension_client,

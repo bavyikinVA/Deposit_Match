@@ -7,10 +7,9 @@ from app.core.config import settings
 class Base(DeclarativeBase):
     pass
 
-
 engine = create_async_engine(
     settings.async_database_url,
-    echo=settings.DB_ECHO,
+    echo=settings.POSTGRES_ECHO,
     pool_pre_ping=True)
 
 AsyncSessionLocal = async_sessionmaker(

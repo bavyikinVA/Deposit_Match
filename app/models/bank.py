@@ -9,6 +9,7 @@ from app.core.database import Base
 
 if TYPE_CHECKING:
     from app.models.deposit_product import DepositProduct
+    from app.models.customer_segment import CustomerSegment
 
 
 class Bank(Base):
@@ -20,6 +21,11 @@ class Bank(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     deposit_products: Mapped[list["DepositProduct"]] = relationship(
+        back_populates="bank",
+        cascade="all, delete-orphan",
+    )
+
+    customer_segments: Mapped[list["CustomerSegment"]] = relationship(
         back_populates="bank",
         cascade="all, delete-orphan",
     )

@@ -3,7 +3,8 @@ import {
     fetchDeposits,
     calculateDeposit,
     fetchDepositsStats,
-    fetchDepositVariantById
+    fetchDepositVariantById,
+    getDepositBanks
 } from '../api/deposits'
 
 export const useDepositsStore = defineStore('deposits', {
@@ -13,7 +14,12 @@ export const useDepositsStore = defineStore('deposits', {
         page: 1,
         pageSize: 12,
         loading: false,
+        loadingMore: false,
         error: '',
+
+        banks: [],
+        banksLoading: false,
+        banksError: '',
 
         calculatorLoading: false,
         calculatorError: '',
@@ -38,6 +44,7 @@ export const useDepositsStore = defineStore('deposits', {
             // из-за условных 367/365/360 дней до выбора пользователя.
             term_days: null,
             currency: 'RUB',
+            bank_ids: [],
             capitalization_enabled: null,
             allow_topup: null,
             allow_partial_withdraw: null,
@@ -47,12 +54,23 @@ export const useDepositsStore = defineStore('deposits', {
         }
     }),
 
+    getters: {
+        hasMore: (state) => state.items.length < state.total
+    },
+
     actions: {
         cleanParams(params) {
             const result = { ...params }
 
             Object.keys(result).forEach((key) => {
-                if (result[key] === null || result[key] === '' || result[key] === undefined) {
+                const value = result[key]
+
+                if (
+                    value === null ||
+                    value === '' ||
+                    value === undefined ||
+                    (Array.isArray(value) && value.length === 0)
+                ) {
                     delete result[key]
                 }
             })
@@ -60,8 +78,28 @@ export const useDepositsStore = defineStore('deposits', {
             return result
         },
 
-        async loadDeposits(override = {}) {
-            this.loading = true
+        async loadBanks() {
+            this.banksLoading = true
+            this.banksError = ''
+
+            try {
+                this.banks = await getDepositBanks()
+            } catch (error) {
+                this.banksError = error?.response?.data?.detail || 'Не удалось загрузить банки'
+            } finally {
+                this.banksLoading = false
+            }
+        },
+
+        async loadDeposits(override = {}, options = {}) {
+            const append = Boolean(options.append)
+
+            if (append) {
+                this.loadingMore = true
+            } else {
+                this.loading = true
+            }
+
             this.error = ''
 
             try {
@@ -71,8 +109,9 @@ export const useDepositsStore = defineStore('deposits', {
                 })
 
                 const data = await fetchDeposits(params)
+                const items = data.items || []
 
-                this.items = data.items || []
+                this.items = append ? [...this.items, ...items] : items
                 this.total = data.total || 0
                 this.page = data.page || 1
                 this.pageSize = data.page_size || 12
@@ -87,7 +126,24 @@ export const useDepositsStore = defineStore('deposits', {
                 this.error = error?.response?.data?.detail || 'Не удалось загрузить предложения'
             } finally {
                 this.loading = false
+                this.loadingMore = false
             }
+        },
+
+        async loadMore() {
+            if (this.loadingMore || this.loading || !this.hasMore) {
+                return
+            }
+
+            await this.loadDeposits(
+                {
+                    page: this.page + 1,
+                    page_size: this.pageSize
+                },
+                {
+                    append: true
+                }
+            )
         },
 
         async loadStats() {

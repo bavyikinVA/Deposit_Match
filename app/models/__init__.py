@@ -1,4 +1,5 @@
 from app.models.bank import Bank
+from app.models.customer_segment import CustomerSegment
 from app.models.deposit_product import DepositProduct
 from app.models.deposit_variant import DepositVariant
 from app.models.open_method import DepositOpenMethod, DepositVariantOpenMethod
@@ -11,6 +12,7 @@ from app.models.deposit_early_termination_rule import DepositEarlyTerminationRul
 
 __all__ = [
     "Bank",
+    "CustomerSegment",
     "DepositProduct",
     "DepositVariant",
     "DepositOpenMethod",

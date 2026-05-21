@@ -3,9 +3,6 @@
     <div class="hero__content card">
       <div class="hero__text">
         <h1>Подберите вклад по сумме, сроку и условиям</h1>
-        <p>
-          Удобный каталог банковских вкладов с фильтрами и калькулятором доходности.
-        </p>
         <div class="hero__actions">
           <RouterLink :to="{ name: 'catalog' }" class="btn btn-primary">
             Смотреть предложения

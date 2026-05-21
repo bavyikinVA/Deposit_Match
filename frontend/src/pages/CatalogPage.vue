@@ -8,12 +8,17 @@
 
       <div class="catalog-page__summary card">
         <div>Найдено предложений: <strong>{{ store.total }}</strong></div>
-        <!--<div>Страница: <strong>{{ store.page }}</strong></div>-->
+        <!--<div v-if="store.items.length">Показано: <strong>{{ store.items.length }}</strong></div>-->
       </div>
     </div>
 
     <div class="catalog-page__layout">
-      <FiltersPanel v-model="filters" @submit="handleSubmit" />
+      <FiltersPanel
+        v-model="filters"
+        :banks="store.banks"
+        :banks-loading="store.banksLoading"
+        @submit="handleSubmit"
+      />
 
       <div class="catalog-page__content">
         <UiLoader v-if="store.loading" />
@@ -21,12 +26,21 @@
         <UiEmptyState v-else-if="!store.items.length" />
         <template v-else>
           <DepositGrid :items="store.items" />
-          <PaginationBar
-            :page="store.page"
-            :page-size="store.pageSize"
-            :total="store.total"
-            @change="changePage"
-          />
+
+          <div v-if="store.hasMore" class="catalog-page__more">
+            <button
+              class="btn btn-primary catalog-page__more-button"
+              type="button"
+              :disabled="store.loadingMore"
+              @click="loadMore"
+            >
+              {{ store.loadingMore ? 'Загрузка...' : 'Показать ещё' }}
+            </button>
+          </div>
+
+          <div v-else class="catalog-page__end">
+            Все найденные предложения загружены
+          </div>
         </template>
       </div>
     </div>
@@ -52,14 +66,17 @@ async function handleSubmit(payload) {
   filters.value = { ...store.filters }
 }
 
-async function changePage(page) {
-  await store.goToPage(page)
+async function loadMore() {
+  await store.loadMore()
   filters.value = { ...store.filters }
-  window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
 onMounted(async () => {
-  await store.loadDeposits()
+  await Promise.all([
+    store.loadBanks(),
+    store.loadDeposits()
+  ])
+
   filters.value = { ...store.filters }
 })
 </script>
@@ -96,6 +113,23 @@ onMounted(async () => {
 .catalog-page__error {
   padding: 24px;
   color: #b42318;
+}
+
+.catalog-page__more {
+  display: flex;
+  justify-content: center;
+  margin-top: 28px;
+}
+
+.catalog-page__more-button {
+  min-width: 190px;
+}
+
+.catalog-page__end {
+  margin-top: 24px;
+  text-align: center;
+  color: var(--text-soft);
+  font-weight: 600;
 }
 
 @media (max-width: 980px) {

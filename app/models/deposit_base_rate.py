@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from app.models.deposit_variant import DepositVariant
     from app.models.deposit_interest_scheme import DepositInterestScheme
     from app.models.open_method import DepositOpenMethod
+    from app.models.customer_segment import CustomerSegment
 
 class DepositBaseRate(Base):
     __tablename__ = "deposit_base_rates"
@@ -35,6 +36,7 @@ class DepositBaseRate(Base):
             "variant_id",
             "interest_scheme_id",
             "open_method_id",
+            "customer_segment_id",
             "amount_from",
             "amount_to",
             "term_from_days",
@@ -47,6 +49,7 @@ class DepositBaseRate(Base):
             "variant_id",
             "interest_scheme_id",
             "open_method_id",
+            "customer_segment_id",
             "amount_from",
             "amount_to",
             "term_from_days",
@@ -76,6 +79,12 @@ class DepositBaseRate(Base):
         index=True,
     )
 
+    customer_segment_id: Mapped[int | None] = mapped_column(
+        ForeignKey("customer_segments.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     amount_from: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     amount_to: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
 
@@ -91,3 +100,4 @@ class DepositBaseRate(Base):
     variant: Mapped["DepositVariant"] = relationship(back_populates="base_rates")
     interest_scheme: Mapped["DepositInterestScheme | None"] = relationship(back_populates="base_rates")
     open_method: Mapped["DepositOpenMethod | None"] = relationship(back_populates="base_rates")
+    customer_segment: Mapped["CustomerSegment | None"] = relationship(back_populates="base_rates")

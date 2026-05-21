@@ -28,6 +28,14 @@ class OpenMethodOut(ORMBase):
     name: str
 
 
+class CustomerSegmentOut(ORMBase):
+    id: int
+    code: str
+    name: str
+    description: str | None = None
+    priority: int = 0
+
+
 class InterestSchemeOut(ORMBase):
     id: int
     code: str
@@ -57,6 +65,9 @@ class RateMatchOut(ORMBase):
     interest_scheme_code: str | None = None
     open_method_id: int | None = None
     open_method_code: str | None = None
+    customer_segment_id: int | None = None
+    customer_segment_code: str | None = None
+    customer_segment_name: str | None = None
     nominal_rate: Decimal
     effective_rate: Decimal | None = None
     effective_from: date
@@ -89,6 +100,31 @@ class DepositVariantOut(ORMBase):
     matched_applied_bonuses: list[AppliedBonusOut] = Field(default_factory=list)
 
 
+class CalculatorOptionOut(BaseModel):
+    code: str
+    name: str
+
+
+class CalculatorTermOptionOut(BaseModel):
+    days: int
+    label: str
+
+
+class CalculatorConditionOut(BaseModel):
+    code: str
+    name: str
+    type: str = "checkbox"
+    description: str | None = None
+
+
+class CalculatorOptionsOut(BaseModel):
+    terms: list[CalculatorTermOptionOut] = Field(default_factory=list)
+    open_methods: list[CalculatorOptionOut] = Field(default_factory=list)
+    interest_schemes: list[CalculatorOptionOut] = Field(default_factory=list)
+    customer_segments: list[CalculatorOptionOut] = Field(default_factory=list)
+    conditions: list[CalculatorConditionOut] = Field(default_factory=list)
+
+
 class DepositsPage(ORMBase):
     items: list[DepositVariantOut]
     total: int
@@ -110,6 +146,7 @@ class DepositSearchParams(BaseModel):
 
     open_method_codes: list[str] | None = None
     interest_scheme_code: str | None = None
+    customer_segment_code: str | None = None
     payout_type: str | None = None
     capitalization_enabled: bool | None = None
 
@@ -127,6 +164,11 @@ class DepositSearchParams(BaseModel):
     has_premium_package: bool | None = None
     promo_code: str | None = None
 
+    # Новая универсальная модель условий.
+    # Примеры: {"is_new_money": true, "has_t_pro": true, "monthly_spend": 10000}
+    conditions: dict[str, Any] = Field(default_factory=dict)
+
+    # Старое поле оставляем временно для обратной совместимости.
     extra_context: dict[str, Any] = Field(default_factory=dict)
 
     page: int = Field(default=1, ge=1)
@@ -153,6 +195,7 @@ class DepositCalculationRequest(BaseModel):
 
     open_method_code: str | None = None
     interest_scheme_code: str | None = None
+    customer_segment_code: str | None = None
     as_of: date = Field(default_factory=date.today)
 
     has_subscription: bool | None = None
@@ -162,6 +205,7 @@ class DepositCalculationRequest(BaseModel):
     savings_balance: Decimal | None = None
     has_premium_package: bool | None = None
     promo_code: str | None = None
+    conditions: dict[str, Any] = Field(default_factory=dict)
 
     extra_context: dict[str, Any] = Field(default_factory=dict)
 
@@ -175,6 +219,8 @@ class DepositCalculationResult(ORMBase):
 
     selected_open_method_code: str | None = None
     selected_interest_scheme_code: str | None = None
+    selected_customer_segment_code: str | None = None
+    selected_customer_segment_name: str | None = None
 
     base_nominal_rate: Decimal
     final_nominal_rate: Decimal

@@ -31,7 +31,12 @@ class CalculationContext:
     as_of: date
     open_method_code: str | None = None
     interest_scheme_code: str | None = None
+    customer_segment_code: str | None = None
 
+    # Универсальные условия расчёта: is_new_money, has_t_pro, monthly_spend и т.д.
+    conditions: dict[str, Any] | None = None
+
+    # Старые поля оставлены для обратной совместимости с текущим фронтом.
     has_subscription: bool | None = None
     is_salary_client: bool | None = None
     is_pension_client: bool | None = None
@@ -48,6 +53,7 @@ class CalculationContext:
             "term_days": self.term_days,
             "open_method_code": self.open_method_code,
             "interest_scheme_code": self.interest_scheme_code,
+            "customer_segment_code": self.customer_segment_code,
             "has_subscription": self.has_subscription,
             "is_salary_client": self.is_salary_client,
             "is_pension_client": self.is_pension_client,
@@ -56,6 +62,8 @@ class CalculationContext:
             "has_premium_package": self.has_premium_package,
             "promo_code": self.promo_code,
         }
+        if self.conditions:
+            base.update(self.conditions)
         if self.extra_context:
             base.update(self.extra_context)
         return base
@@ -127,10 +135,54 @@ def _find_scheme(
     )
 
 
+def _find_customer_segment_id(
+    variant: DepositVariant,
+    customer_segment_code: str | None,
+) -> int | None:
+    """
+    Возвращает id сегмента клиента для банка выбранного вклада.
+
+    None означает универсальную ставку/ставку для всех клиентов.
+    Если пользователь явно выбрал сегмент, а у банка такого сегмента нет,
+    считаем это ошибкой пользовательского выбора.
+    """
+    if not customer_segment_code:
+        return None
+
+    bank = variant.product.bank if variant.product else None
+    segments = getattr(bank, "customer_segments", []) if bank else []
+
+    for segment in segments:
+        if segment.is_active and segment.code == customer_segment_code:
+            return segment.id
+
+    raise DepositCalculationError(
+        f"Сегмент клиента '{customer_segment_code}' не поддерживается банком выбранного вклада"
+    )
+
+
+def _resolve_customer_segment(
+    variant: DepositVariant,
+    customer_segment_id: int | None,
+) -> tuple[str | None, str | None]:
+    if customer_segment_id is None:
+        return None, None
+
+    bank = variant.product.bank if variant.product else None
+    segments = getattr(bank, "customer_segments", []) if bank else []
+
+    for segment in segments:
+        if segment.id == customer_segment_id:
+            return segment.code, segment.name
+
+    return None, None
+
+
 def _rate_specificity(
     rate: DepositBaseRate,
     selected_scheme_id: int | None,
     selected_open_method_id: int | None,
+    selected_customer_segment_id: int | None,
 ) -> tuple:
     amount_span = (
         (rate.amount_to - rate.amount_from)
@@ -140,6 +192,8 @@ def _rate_specificity(
     term_span = rate.term_to_days - rate.term_from_days
 
     return (
+        # Точная ставка для выбранного сегмента важнее универсальной ставки.
+        1 if selected_customer_segment_id is not None and rate.customer_segment_id == selected_customer_segment_id else 0,
         1 if selected_scheme_id is not None and rate.interest_scheme_id == selected_scheme_id else 0,
         1 if selected_open_method_id is not None and rate.open_method_id == selected_open_method_id else 0,
         1 if rate.interest_scheme_id is not None else 0,
@@ -158,10 +212,22 @@ def select_best_base_rate(
     selected_open_method_id = _find_open_method_id(variant, ctx.open_method_code)
     selected_scheme = _find_scheme(variant, ctx.interest_scheme_code)
     selected_scheme_id = selected_scheme.id if selected_scheme else None
+    selected_customer_segment_id = _find_customer_segment_id(
+        variant, ctx.customer_segment_code
+    )
 
     candidates: list[DepositBaseRate] = []
 
     for rate in variant.base_rates:
+        # Если выбран сегмент, допустимы точные ставки сегмента и универсальные ставки.
+        # Если сегмент не выбран, не отдаём премиальные ставки обычному пользователю.
+        if selected_customer_segment_id is None:
+            if rate.customer_segment_id is not None:
+                continue
+        else:
+            if rate.customer_segment_id not in (None, selected_customer_segment_id):
+                continue
+
         if not _date_matches(ctx.as_of, rate.effective_from, rate.effective_to):
             continue
 
@@ -192,7 +258,14 @@ def select_best_base_rate(
             {
                 (rate.term_from_days, rate.term_to_days)
                 for rate in variant.base_rates
-                if _date_matches(ctx.as_of, rate.effective_from, rate.effective_to)
+                if (
+                    (selected_customer_segment_id is None and rate.customer_segment_id is None)
+                    or (
+                        selected_customer_segment_id is not None
+                        and rate.customer_segment_id in (None, selected_customer_segment_id)
+                    )
+                )
+                and _date_matches(ctx.as_of, rate.effective_from, rate.effective_to)
                 and ctx.amount >= rate.amount_from
                 and (rate.amount_to is None or ctx.amount <= rate.amount_to)
                 and (
@@ -223,7 +296,12 @@ def select_best_base_rate(
         )
 
     candidates.sort(
-        key=lambda r: _rate_specificity(r, selected_scheme_id, selected_open_method_id),
+        key=lambda r: _rate_specificity(
+            r,
+            selected_scheme_id,
+            selected_open_method_id,
+            selected_customer_segment_id,
+        ),
         reverse=True,
     )
     best_rate = candidates[0]
@@ -341,10 +419,6 @@ def _bonus_to_rate_delta(
     if bonus.is_percent_points:
         return q4(bonus_value)
 
-    # интерпретация:
-    # если bonus_value НЕ в процентных пунктах,
-    # считаем это процентом от базовой ставки
-    # например base=20.0, bonus_value=10 => +2.0 п.п.
     return q4(base_nominal_rate * bonus_value / ONE_HUNDRED)
 
 
@@ -404,6 +478,9 @@ def build_rate_match_out(
             scheme_code = scheme.code
 
     open_method_code = _resolve_open_method_code(variant, rate.open_method_id)
+    customer_segment_code, customer_segment_name = _resolve_customer_segment(
+        variant, rate.customer_segment_id
+    )
 
     return RateMatchOut(
         base_rate_id=rate.id,
@@ -411,6 +488,9 @@ def build_rate_match_out(
         interest_scheme_code=scheme_code,
         open_method_id=rate.open_method_id,
         open_method_code=open_method_code,
+        customer_segment_id=rate.customer_segment_id,
+        customer_segment_code=customer_segment_code,
+        customer_segment_name=customer_segment_name,
         nominal_rate=Decimal(str(rate.nominal_rate)),
         effective_rate=(
             Decimal(str(rate.effective_rate))
@@ -476,9 +556,13 @@ def calculate_variant_result(
     resolved_interest_scheme_code = (
         scheme.code if scheme is not None else ctx.interest_scheme_code
     )
+    resolved_customer_segment_code, resolved_customer_segment_name = _resolve_customer_segment(
+        variant, base_rate.customer_segment_id
+    )
+    resolved_customer_segment_code = (
+        resolved_customer_segment_code or ctx.customer_segment_code
+    )
 
-    # effective_rate базы нельзя честно отдавать как итоговую,
-    # если были надбавки: это уже другая доходность
     effective_rate_out = None if bonuses else base_rate.effective_rate
 
     return DepositCalculationResult(
@@ -488,6 +572,8 @@ def calculate_variant_result(
         term_days=ctx.term_days,
         selected_open_method_code=resolved_open_method_code,
         selected_interest_scheme_code=resolved_interest_scheme_code,
+        selected_customer_segment_code=resolved_customer_segment_code,
+        selected_customer_segment_name=resolved_customer_segment_name,
         base_nominal_rate=q4(base_nominal_rate),
         final_nominal_rate=final_nominal_rate,
         effective_rate=effective_rate_out,

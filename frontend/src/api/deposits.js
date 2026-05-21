@@ -24,3 +24,12 @@ export async function fetchDepositVariantById(variantId) {
     const { data } = await client.get(`/api/deposits/${variantId}`)
     return data
 }
+export async function fetchCalculatorOptions(variantId) {
+    const { data } = await client.get(`/api/deposits/${variantId}/calculator-options`)
+    return data
+}
+
+export async function getDepositBanks() {
+  const response = await client.get('/api/deposits/banks')
+  return response.data
+}
